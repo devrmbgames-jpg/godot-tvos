@@ -1,0 +1,185 @@
+name: Recover tvOS static libraries
+
+# Recover only the complete archives produced by this original native Xcode run.
+# Engine changes do not trigger recovery of these older binaries.
+on:
+  push:
+    branches: [feature/godot_3_tvos]
+    paths:
+      - ".github/workflows/recover_tvos_libraries.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_SHA: 8d5994d61f0b0fda063be9fcb2c2a27d52d22783
+  SOURCE_RUN_ID: "44351781332"
+
+jobs:
+  recover:
+    name: Recover ${{ matrix.target }} arm64 template
+    if: github.ref == 'refs/heads/feature/godot_3_tvos'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: release_debug
+            library: libgodot.tvos.opt.debug.arm64.a
+            bytes: 80687744
+          - target: release
+            library: libgodot.tvos.opt.arm64.a
+            bytes: 74275896
+    env:
+      BUILD_TARGET: ${{ matrix.target }}
+      LIBRARY: ${{ matrix.library }}
+      EXPECTED_BYTES: ${{ matrix.bytes }}
+      CACHE_KEY: tvos-device-arm64-${{ matrix.target }}-3.6-tvos-xcode26.3-v1-refs/heads/feature/godot_3_tvos-8d5994d61f0b0fda063be9fcb2c2a27d52d22783
+
+    steps:
+      - name: Prepare archive inspection tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          packages=()
+          command -v zstd >/dev/null 2>&1 || packages+=(zstd)
+          if ! command -v llvm-ar-18 >/dev/null 2>&1 || \
+             ! command -v llvm-lipo-18 >/dev/null 2>&1 || \
+             ! command -v llvm-readobj-18 >/dev/null 2>&1; then
+            packages+=(llvm-18)
+          fi
+          if ((${#packages[@]})); then
+            sudo apt-get update
+            sudo apt-get install --yes --no-install-recommends "${packages[@]}"
+          fi
+          for tool in zstd llvm-ar-18 llvm-lipo-18 llvm-readobj-18; do
+            command -v "$tool"
+          done
+
+      - name: Restore original native build cache
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          # This literal input, including the slash, determines the cache version.
+          # The cached tar members restore into the current workspace/.scons_cache.
+          path: /Users/runner/work/godot-tvos/godot-tvos/.scons_cache/
+          key: ${{ env.CACHE_KEY }}
+          fail-on-cache-miss: true
+
+      - name: Recover and verify the unchanged archive
+        shell: bash
+        env:
+          CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import subprocess
+
+          if os.environ["CACHE_HIT"] != "true":
+              raise SystemExit("The original cache key was not an exact match.")
+
+          workspace = Path(os.environ["GITHUB_WORKSPACE"])
+          cache_dir = workspace / ".scons_cache"
+          expected_bytes = int(os.environ["EXPECTED_BYTES"])
+          source_sha = os.environ["SOURCE_SHA"]
+          candidates = []
+          for path in cache_dir.glob("*/*"):
+              if path.is_symlink() or not path.is_file() or path.stat().st_size != expected_bytes:
+                  continue
+              with path.open("rb") as stream:
+                  if stream.read(8) == b"!<arch>\n":
+                      candidates.append(path)
+          if len(candidates) != 1:
+              raise SystemExit(f"Expected one complete {expected_bytes}-byte archive; found {len(candidates)}.")
+
+          cached_archive = candidates[0]
+          original_bytes = cached_archive.read_bytes()
+          if source_sha.encode("ascii") not in original_bytes:
+              raise SystemExit("The complete archive does not contain the original source commit.")
+          original_sha256 = hashlib.sha256(original_bytes).hexdigest()
+
+          dist = workspace / "dist"
+          dist.mkdir()
+          archive = dist / os.environ["LIBRARY"]
+          shutil.copyfile(cached_archive, archive)
+          with archive.open("rb") as stream:
+              recovered_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+          if archive.stat().st_size != expected_bytes or recovered_sha256 != original_sha256:
+              raise SystemExit("The recovered archive differs from the complete cached archive.")
+
+          diagnostics = Path(os.environ["RUNNER_TEMP"]) / f"tvos-recovery-{os.environ['BUILD_TARGET']}"
+          diagnostics.mkdir()
+          subprocess.run(["file", str(archive)], check=True)
+          members = subprocess.run(
+              ["llvm-ar-18", "t", str(archive)], check=True, capture_output=True, text=True
+          ).stdout
+          if not members.splitlines():
+              raise SystemExit("The recovered archive contains no members.")
+          (diagnostics / "archive-members.txt").write_text(members)
+          architectures = subprocess.run(
+              ["llvm-lipo-18", str(archive), "-archs"], check=True, capture_output=True, text=True
+          ).stdout.split()
+          if architectures != ["arm64"]:
+              raise SystemExit(f"Expected exactly arm64; found {architectures!r}.")
+          subprocess.run(["llvm-lipo-18", str(archive), "-verify_arch", "arm64"], check=True)
+          with (diagnostics / "mach-o-headers.txt").open("w") as stream:
+              subprocess.run(
+                  ["llvm-readobj-18", "--file-header", "--macho-version-min", str(archive)],
+                  check=True, stdout=stream,
+              )
+
+          (dist / f"{archive.name}.sha256").write_text(f"{recovered_sha256}  {archive.name}\n")
+          source_run_id = os.environ["SOURCE_RUN_ID"]
+          provenance = {
+              "status": "recovered",
+              "method": "Copied the complete SCons-cached archive unchanged; no compilation or archive reconstruction.",
+              "filename": archive.name,
+              "target": os.environ["BUILD_TARGET"],
+              "architecture": "arm64",
+              "size_bytes": expected_bytes,
+              "sha256": recovered_sha256,
+              "source_repository": "devrmbgames-jpg/godot-tvos",
+              "source_commit": source_sha,
+              "source_run_id": int(source_run_id),
+              "source_run_url": f"https://github.com/devrmbgames-jpg/godot-tvos/actions/runs/{source_run_id}",
+              "source_cache_key": os.environ["CACHE_KEY"],
+              "source_cache_entry": str(cached_archive.relative_to(cache_dir)),
+              "recovery_commit": os.environ["GITHUB_SHA"],
+              "recovery_run_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+              "validation": {
+                  "exact_cache_hit": True,
+                  "embedded_source_commit": True,
+                  "unchanged_copy": True,
+                  "archive_member_count": len(members.splitlines()),
+                  "llvm_lipo_arm64": "passed",
+                  "llvm_readobj": "passed",
+              },
+          }
+          (dist / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
+          print(f"Recovered {archive.name}: {expected_bytes} bytes, {len(members.splitlines())} members, arm64")
+          print(f"Original source commit: {source_sha}; SHA-256: {recovered_sha256}")
+          print(f"Read-only archive inspection output: {diagnostics}")
+          PY
+
+      - name: Upload recovered static template
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-tvos-${{ matrix.target }}-arm64-8d5994d
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Write recovery download link
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          printf '### Recovered Apple TV arm64 template\n\nFile: `%s`\n\nOriginal source: `%s`\n\n[Original native Xcode run](https://github.com/devrmbgames-jpg/godot-tvos/actions/runs/%s)\n\n[Download recovered archive and provenance](%s)\n' \
+            "$LIBRARY" "$SOURCE_SHA" "$SOURCE_RUN_ID" "$ARTIFACT_URL" >> "$GITHUB_STEP_SUMMARY"

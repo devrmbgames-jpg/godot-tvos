@@ -176,7 +176,7 @@ they test packaging and are not runnable applications.
 The **tvOS Builds** GitHub Actions workflow automatically builds two independent
 Apple TV arm64 static export templates on relevant pushes to
 `feature/godot_3_tvos`. It uses the repository's shared `godot-build` action,
-an Intel `macos-15-intel` runner and Xcode 26.3. Building the `.a` files does not
+an Intel `macos-26-intel` runner and Xcode 26.3. Building the `.a` files does not
 require signing certificates, an Apple developer team or a game project.
 
 Open **Actions → tvOS Builds → the completed run → Artifacts** to download:
