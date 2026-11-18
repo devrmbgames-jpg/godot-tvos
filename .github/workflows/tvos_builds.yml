@@ -13,10 +13,22 @@ on:
       - "methods.py"
       - "SConstruct"
       - ".github/workflows/tvos_builds.yml"
+      - ".github/actions/godot-build/**"
+      - ".github/actions/godot-deps/**"
   workflow_dispatch:
+    inputs:
+      build_simulators:
+        description: Also build simulator libraries, package tvos.zip and link Xcode projects
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+
+env:
+  # Keep the SDK and compiler from the same installed Xcode.
+  DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+  GODOT_BASE_BRANCH: 3.6-tvos-xcode26.3-v1
 
 concurrency:
   group: tvos-${{ github.ref }}
@@ -25,67 +37,134 @@ concurrency:
 jobs:
   template:
     name: ${{ matrix.name }}
-    runs-on: macos-latest
+    # Intel runners can cross-compile arm64 and avoid the constrained ARM runner pool.
+    runs-on: macos-15-intel
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: Device arm64
-            arch: arm64
-            simulator: "no"
-            artifact: device-arm64
-          - name: Simulator arm64
-            arch: arm64
-            simulator: "yes"
-            artifact: simulator-arm64
-          - name: Simulator x86_64
-            arch: x86_64
-            simulator: "yes"
-            artifact: simulator-x86_64
+          - name: Apple TV arm64 - Debug template
+            target: release_debug
+            library: libgodot.tvos.opt.debug.arm64.a
+          - name: Apple TV arm64 - Release template
+            target: release
+            library: libgodot.tvos.opt.arm64.a
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
         with:
           python-version: "3.12"
 
-      - name: Install SCons and report SDKs
+      - name: Report Apple toolchain
         run: |
-          python -m pip install scons==4.7.0
           xcodebuild -version
           xcrun --sdk appletvos --show-sdk-version
-          xcrun --sdk appletvsimulator --show-sdk-version
 
       - name: Validate build configuration
         run: python -m unittest discover -s platform/tvos/tests -p 'test_build_configuration.py'
 
-      - name: Compile debug export template
-        run: >-
-          scons platform=tvos tools=no target=release_debug
-          arch=${{ matrix.arch }} simulator=${{ matrix.simulator }}
-          TVOSPATH="$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain"
-          debug_symbols=no verbose=yes -j"$(sysctl -n hw.logicalcpu)"
+      - name: Restore Godot build cache
+        uses: ./.github/actions/godot-cache-restore
+        continue-on-error: true
+        with:
+          cache-name: tvos-device-arm64-${{ matrix.target }}
 
-      - name: Compile release export template
-        if: matrix.simulator == 'no'
-        run: >-
-          scons platform=tvos tools=no target=release arch=arm64
-          TVOSPATH="$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain"
-          debug_symbols=no verbose=yes -j"$(sysctl -n hw.logicalcpu)"
+      - name: Compile static export template
+        id: build
+        uses: ./.github/actions/godot-build
+        with:
+          platform: tvos
+          target: ${{ matrix.target }}
+          tools: false
+          sconsflags: >-
+            arch=arm64 simulator=no
+            TVOSPATH="${{ env.DEVELOPER_DIR }}/Toolchains/XcodeDefault.xctoolchain"
+            debug_symbols=no verbose=yes -j4
 
-      - name: Upload static libraries
+      - name: Verify arm64 library and create checksum
+        working-directory: bin
+        env:
+          LIBRARY: ${{ matrix.library }}
+        run: |
+          test -s "$LIBRARY"
+          file "$LIBRARY"
+          xcrun lipo -info "$LIBRARY"
+          xcrun lipo -verify_arch arm64 "$LIBRARY"
+          shasum -a 256 "$LIBRARY" > "$LIBRARY.sha256"
+
+      - name: Upload static template
+        id: upload
         uses: actions/upload-artifact@v4
         with:
-          name: tvos-${{ matrix.artifact }}
-          path: bin/libgodot.tvos*.a
+          name: godot-tvos-${{ matrix.target }}-arm64
+          path: |
+            bin/${{ matrix.library }}
+            bin/${{ matrix.library }}.sha256
           if-no-files-found: error
+          retention-days: 30
+
+      - name: Write download link
+        run: |
+          printf '### Apple TV arm64 template\n\nFile: `%s`\n\n[Download artifact](%s)\n' \
+            '${{ matrix.library }}' '${{ steps.upload.outputs.artifact-url }}' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save Godot build cache
+        if: ${{ !cancelled() && steps.build.outcome != 'skipped' }}
+        uses: ./.github/actions/godot-cache-save
+        continue-on-error: true
+        with:
+          cache-name: tvos-device-arm64-${{ matrix.target }}
+
+  simulator:
+    name: Simulator ${{ matrix.arch }} - Debug template
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_simulators }}
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
+        with:
+          python-version: "3.12"
+
+      - name: Compile simulator template
+        uses: ./.github/actions/godot-build
+        with:
+          platform: tvos
+          target: release_debug
+          tools: false
+          sconsflags: >-
+            arch=${{ matrix.arch }} simulator=yes
+            TVOSPATH="${{ env.DEVELOPER_DIR }}/Toolchains/XcodeDefault.xctoolchain"
+            debug_symbols=no verbose=yes -j4
+
+      - name: Verify simulator library
+        run: >-
+          xcrun lipo -verify_arch ${{ matrix.arch }}
+          bin/libgodot.tvos.opt.debug.${{ matrix.arch }}.simulator.a
+
+      - name: Upload simulator library
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-tvos-simulator-${{ matrix.arch }}
+          path: bin/libgodot.tvos.opt.debug.${{ matrix.arch }}.simulator.a
+          if-no-files-found: error
+          retention-days: 30
 
   package:
     name: Package and link Xcode projects
-    needs: template
-    runs-on: macos-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_simulators }}
+    needs: [template, simulator]
+    runs-on: macos-15-intel
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -96,7 +175,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: tvos-*
+          pattern: godot-tvos-*
           path: bin
           merge-multiple: true
 

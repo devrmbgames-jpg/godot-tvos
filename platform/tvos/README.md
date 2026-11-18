@@ -173,11 +173,31 @@ GODOT_BIN=/absolute/path/to/custom/editor \
 The fixture archives used by these export tests contain placeholder libraries;
 they test packaging and are not runnable applications.
 
-The **tvOS Builds** GitHub Actions workflow builds the engine for device arm64
-and simulator arm64/x86_64, packages `tvos.zip`, and links unsigned device and
-simulator apps using Xcode. The link-test application has an empty PCK and is
-not intended for gameplay. Enable Actions for the fork if GitHub has disabled
-its inherited workflows.
+The **tvOS Builds** GitHub Actions workflow automatically builds two independent
+Apple TV arm64 static export templates on relevant pushes to
+`feature/godot_3_tvos`. It uses the repository's shared `godot-build` action,
+an Intel `macos-15-intel` runner and Xcode 26.3. Building the `.a` files does not
+require signing certificates, an Apple developer team or a game project.
+
+Open **Actions → tvOS Builds → the completed run → Artifacts** to download:
+
+| Artifact | Static library inside |
+| --- | --- |
+| `godot-tvos-release_debug-arm64` | `libgodot.tvos.opt.debug.arm64.a` |
+| `godot-tvos-release-arm64` | `libgodot.tvos.opt.arm64.a` |
+
+Each artifact also contains a SHA-256 checksum. The jobs validate the arm64
+architecture and upload their libraries independently, so one failed build
+does not suppress the other successful artifact. Artifacts are retained for
+30 days; the completed job summary also contains a download link. Use GitHub's
+**Re-run jobs** to repeat an existing run.
+
+The optional `workflow_dispatch` input `build_simulators` additionally builds
+simulator arm64/x86_64 libraries, packages `tvos.zip`, and links unsigned device
+and simulator apps using Xcode. The link-test application has an empty PCK and
+is not intended for gameplay. GitHub displays the manual **Run workflow**
+button once the workflow is present on the repository's default branch.
+Enable Actions for the fork if GitHub has disabled its inherited workflows.
 
 Before shipping an application, check these behaviors on actual hardware:
 
