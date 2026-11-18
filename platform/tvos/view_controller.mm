@@ -157,7 +157,7 @@
 }
 
 - (void)keyboardInputEnded:(NSNotification *)notification {
-	self.keyboardInputActive = [notification.name isEqualToString:UITextFieldTextDidEndEditingNotification] ? NO : self.keyboardView.isFirstResponder;
+	self.keyboardInputActive = NO;
 	[self updateControllerInputRouting];
 	if (!self.controllerUserInteractionEnabled) {
 		[self.godotView becomeFirstResponder];
@@ -169,10 +169,9 @@
 	self.keyboardView = [GodotKeyboardInputView new];
 	[self.view addSubview:self.keyboardView];
 	NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
+	// tvOS exposes text-field editing notifications, but not UIKeyboard notifications.
 	[center addObserver:self selector:@selector(keyboardInputBegan:) name:UITextFieldTextDidBeginEditingNotification object:self.keyboardView];
 	[center addObserver:self selector:@selector(keyboardInputEnded:) name:UITextFieldTextDidEndEditingNotification object:self.keyboardView];
-	[center addObserver:self selector:@selector(keyboardInputBegan:) name:UIKeyboardWillShowNotification object:nil];
-	[center addObserver:self selector:@selector(keyboardInputEnded:) name:UIKeyboardDidHideNotification object:nil];
 }
 
 - (void)displayLoadingOverlay {

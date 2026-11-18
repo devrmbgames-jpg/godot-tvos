@@ -83,7 +83,7 @@ jobs:
           sconsflags: >-
             arch=arm64 simulator=no
             TVOSPATH="${{ env.DEVELOPER_DIR }}/Toolchains/XcodeDefault.xctoolchain"
-            debug_symbols=no verbose=yes -j4
+            debug_symbols=no verbose=yes -j4 -k
 
       - name: Verify arm64 library and create checksum
         working-directory: bin
@@ -145,7 +145,7 @@ jobs:
           sconsflags: >-
             arch=${{ matrix.arch }} simulator=yes
             TVOSPATH="${{ env.DEVELOPER_DIR }}/Toolchains/XcodeDefault.xctoolchain"
-            debug_symbols=no verbose=yes -j4
+            debug_symbols=no verbose=yes -j4 -k
 
       - name: Verify simulator library
         run: >-
