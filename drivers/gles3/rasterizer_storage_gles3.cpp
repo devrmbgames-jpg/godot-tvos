@@ -41,7 +41,7 @@
 #include "servers/visual/visual_server_globals.h"
 #include "servers/visual_server.h"
 
-#if defined(IPHONE_ENABLED) || defined(ANDROID_ENABLED)
+#if defined(IPHONE_ENABLED) || defined(TVOS_ENABLED) || defined(ANDROID_ENABLED)
 #include <dlfcn.h>
 #endif
 
@@ -8194,7 +8194,7 @@ void RasterizerStorageGLES3::initialize() {
 	// If the desktop build is using S3TC, and you export / run from the IDE for android, if the device supports
 	// S3TC it will crash trying to load these textures, as they are not exported in the APK. This is a simple way
 	// to prevent Android devices trying to load S3TC, by faking lack of hardware support.
-#if defined(ANDROID_ENABLED) || defined(IPHONE_ENABLED)
+#if defined(ANDROID_ENABLED) || defined(IPHONE_ENABLED) || defined(TVOS_ENABLED)
 	config.s3tc_supported = false;
 #endif
 #endif
@@ -8240,10 +8240,10 @@ void RasterizerStorageGLES3::initialize() {
 			glMaxShaderCompilerThreadsKHR(ShaderGLES3::max_simultaneous_compiles);
 		}
 #else
-#if defined(IPHONE_ENABLED) || defined(ANDROID_ENABLED) // TODO: Consider more platforms?
+#if defined(IPHONE_ENABLED) || defined(TVOS_ENABLED) || defined(ANDROID_ENABLED) // TODO: Consider more platforms?
 		void *gles3_lib = nullptr;
 		void (*MaxShaderCompilerThreads)(GLuint) = nullptr;
-#if defined(IPHONE_ENABLED)
+#if defined(IPHONE_ENABLED) || defined(TVOS_ENABLED)
 		gles3_lib = dlopen(nullptr, RTLD_LAZY);
 #elif defined(ANDROID_ENABLED)
 		gles3_lib = dlopen("libGLESv3.so", RTLD_LAZY);

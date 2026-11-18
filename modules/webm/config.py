@@ -1,7 +1,7 @@
 def can_build(env, platform):
     if env["arch"].startswith("rv"):
         return False
-    if platform == "iphone":
+    if platform in ["iphone", "tvos"]:
         return False
     # Can work in theory but our libvpx/SCsub is too broken to compile NEON .s
     # files properly on Linux arm32. Could be fixed by someone motivated.

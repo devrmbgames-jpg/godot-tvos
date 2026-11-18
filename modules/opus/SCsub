@@ -139,7 +139,7 @@ if env["builtin_opus"]:
 
     opus_sources_silk = []
 
-    if env["platform"] in ["android", "iphone", "javascript"]:
+    if env["platform"] in ["android", "iphone", "tvos", "javascript"]:
         env_opus.Append(CPPDEFINES=["FIXED_POINT"])
         opus_sources_silk = [
             "silk/fixed/LTP_analysis_filter_FIX.c",
@@ -226,7 +226,7 @@ if env["builtin_opus"]:
             env_opus.Append(CPPDEFINES=["OPUS_ARM_OPT"])
         elif "android_arch" in env and env["android_arch"] == "arm64v8":
             env_opus.Append(CPPDEFINES=["OPUS_ARM64_OPT"])
-    elif env["platform"] == "iphone":
+    elif env["platform"] in ["iphone", "tvos"]:
         if "arch" in env and env["arch"] == "arm":
             env_opus.Append(CPPDEFINES=["OPUS_ARM_OPT"])
         elif "arch" in env and env["arch"] == "arm64":

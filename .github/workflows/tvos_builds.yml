@@ -1,0 +1,133 @@
+name: tvOS Builds
+
+on:
+  push:
+    branches: [feature/godot_3_tvos]
+    paths:
+      - "platform/tvos/**"
+      - "misc/dist/tvos_xcode/**"
+      - "drivers/**"
+      - "core/**"
+      - "modules/**"
+      - "editor/editor_export.*"
+      - "methods.py"
+      - "SConstruct"
+      - ".github/workflows/tvos_builds.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tvos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  template:
+    name: ${{ matrix.name }}
+    runs-on: macos-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Device arm64
+            arch: arm64
+            simulator: "no"
+            artifact: device-arm64
+          - name: Simulator arm64
+            arch: arm64
+            simulator: "yes"
+            artifact: simulator-arm64
+          - name: Simulator x86_64
+            arch: x86_64
+            simulator: "yes"
+            artifact: simulator-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install SCons and report SDKs
+        run: |
+          python -m pip install scons==4.7.0
+          xcodebuild -version
+          xcrun --sdk appletvos --show-sdk-version
+          xcrun --sdk appletvsimulator --show-sdk-version
+
+      - name: Validate build configuration
+        run: python -m unittest discover -s platform/tvos/tests -p 'test_build_configuration.py'
+
+      - name: Compile debug export template
+        run: >-
+          scons platform=tvos tools=no target=release_debug
+          arch=${{ matrix.arch }} simulator=${{ matrix.simulator }}
+          TVOSPATH="$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain"
+          debug_symbols=no verbose=yes -j"$(sysctl -n hw.logicalcpu)"
+
+      - name: Compile release export template
+        if: matrix.simulator == 'no'
+        run: >-
+          scons platform=tvos tools=no target=release arch=arm64
+          TVOSPATH="$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain"
+          debug_symbols=no verbose=yes -j"$(sysctl -n hw.logicalcpu)"
+
+      - name: Upload static libraries
+        uses: actions/upload-artifact@v4
+        with:
+          name: tvos-${{ matrix.artifact }}
+          path: bin/libgodot.tvos*.a
+          if-no-files-found: error
+
+  package:
+    name: Package and link Xcode projects
+    needs: template
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tvos-*
+          path: bin
+          merge-multiple: true
+
+      - name: Create XCFrameworks and export template
+        run: >-
+          python platform/tvos/build_template.py
+          --debug bin/libgodot.tvos.opt.debug.arm64.a
+          --release bin/libgodot.tvos.opt.arm64.a
+          --debug-simulator bin/libgodot.tvos.opt.debug.arm64.simulator.a bin/libgodot.tvos.opt.debug.x86_64.simulator.a
+          --output bin/tvos.zip
+          --smoke-project bin/tvos-smoke
+
+      - name: Link an unsigned tvOS application
+        run: >-
+          xcodebuild -project bin/tvos-smoke/TVOSSmoke.xcodeproj
+          -scheme TVOSSmoke -configuration Debug
+          -destination 'generic/platform=tvOS'
+          -derivedDataPath bin/device-derived
+          CODE_SIGNING_ALLOWED=NO build
+
+      - name: Link an unsigned tvOS Simulator application
+        run: >-
+          xcodebuild -project bin/tvos-smoke/TVOSSmoke.xcodeproj
+          -scheme TVOSSmoke -configuration Debug
+          -destination 'generic/platform=tvOS Simulator'
+          -derivedDataPath bin/simulator-derived
+          CODE_SIGNING_ALLOWED=NO build
+
+      - name: Upload export template
+        uses: actions/upload-artifact@v4
+        with:
+          name: tvos-export-template
+          path: bin/tvos.zip
+          if-no-files-found: error
