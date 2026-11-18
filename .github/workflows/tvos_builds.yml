@@ -93,7 +93,7 @@ jobs:
           test -s "$LIBRARY"
           file "$LIBRARY"
           xcrun lipo -info "$LIBRARY"
-          xcrun lipo -verify_arch arm64 "$LIBRARY"
+          xcrun lipo "$LIBRARY" -verify_arch arm64
           shasum -a 256 "$LIBRARY" > "$LIBRARY.sha256"
 
       - name: Upload static template
@@ -149,8 +149,8 @@ jobs:
 
       - name: Verify simulator library
         run: >-
-          xcrun lipo -verify_arch ${{ matrix.arch }}
-          bin/libgodot.tvos.opt.debug.${{ matrix.arch }}.simulator.a
+          xcrun lipo bin/libgodot.tvos.opt.debug.${{ matrix.arch }}.simulator.a
+          -verify_arch ${{ matrix.arch }}
 
       - name: Upload simulator library
         uses: actions/upload-artifact@v4
