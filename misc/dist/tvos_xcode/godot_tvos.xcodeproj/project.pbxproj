@@ -219,7 +219,7 @@
 				TVOS_DEPLOYMENT_TARGET = 15.0;
 				SDKROOT = appletvos;
 				SUPPORTED_PLATFORMS = "appletvos appletvsimulator";
-				OTHER_LDFLAGS = "$(inherited) -ObjC -lc++ -lz -framework AudioToolbox -framework AudioUnit -framework AVFoundation -framework CoreAudio -framework CoreGraphics -framework CoreMedia -framework CoreVideo -framework Foundation -framework GameController -framework OpenGLES -framework QuartzCore -framework Security -framework SystemConfiguration -framework UIKit $linker_flags";
+				OTHER_LDFLAGS = "$(inherited) -ObjC -lc++ -lz -framework AudioToolbox -framework AVFoundation -framework CoreAudio -framework CoreGraphics -framework CoreMedia -framework CoreVideo -framework Foundation -framework GameController -framework OpenGLES -framework QuartzCore -framework Security -framework SystemConfiguration -framework UIKit $linker_flags";
 				TARGETED_DEVICE_FAMILY = "3";
 			};
 			name = Debug;
@@ -259,7 +259,7 @@
 				TVOS_DEPLOYMENT_TARGET = 15.0;
 				SDKROOT = appletvos;
 				SUPPORTED_PLATFORMS = "appletvos appletvsimulator";
-				OTHER_LDFLAGS = "$(inherited) -ObjC -lc++ -lz -framework AudioToolbox -framework AudioUnit -framework AVFoundation -framework CoreAudio -framework CoreGraphics -framework CoreMedia -framework CoreVideo -framework Foundation -framework GameController -framework OpenGLES -framework QuartzCore -framework Security -framework SystemConfiguration -framework UIKit $linker_flags";
+				OTHER_LDFLAGS = "$(inherited) -ObjC -lc++ -lz -framework AudioToolbox -framework AVFoundation -framework CoreAudio -framework CoreGraphics -framework CoreMedia -framework CoreVideo -framework Foundation -framework GameController -framework OpenGLES -framework QuartzCore -framework Security -framework SystemConfiguration -framework UIKit $linker_flags";
 				TARGETED_DEVICE_FAMILY = "3";
 				VALIDATE_PRODUCT = YES;
 			};
