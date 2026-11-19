@@ -2,7 +2,7 @@ name: tvOS Builds
 
 on:
   push:
-    branches: [feature/godot_3_tvos]
+    branches: [feature/godot_3_tvos, fix/siri-remote-xcframework-20261120]
     paths:
       - "platform/tvos/**"
       - "misc/dist/tvos_xcode/**"

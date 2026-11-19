@@ -253,10 +253,16 @@ int JoypadAppleTV::joy_id_for_name(const String &p_name) {
 
 - (void)sendButton:(int)button pressed:(BOOL)pressed controller:(GCController *)controller {
 	if (![self canSendInput]) {
+		if (controller.microGamepad && !controller.extendedGamepad) {
+			NSLog(@"[JoypadAppleTV] Siri Remote BLOCKED button=%d down=%d processing=%d focused=%d nativeUI=%d", button, (int)pressed, (int)self.isProcessing, (int)self.inputActive, (int)self.nativeUIInput);
+		}
 		return;
 	}
 	int joy_id = [self getJoyIdForController:controller];
 	if (joy_id >= 0) {
+		if (controller.microGamepad && !controller.extendedGamepad) {
+			NSLog(@"[JoypadAppleTV] Siri Remote BUTTON joy=%d index=%d down=%d", joy_id, button, (int)pressed);
+		}
 		JOYPAD_APPLETV_LOG(@"button joy=%d index=%d pressed=%d", joy_id, button, (int)pressed);
 		OSAppleTV::get_singleton()->joy_button(joy_id, button, pressed);
 	}
@@ -433,6 +439,7 @@ int JoypadAppleTV::joy_id_for_name(const String &p_name) {
 		return;
 	}
 	if (!controller.extendedGamepad && !controller.microGamepad) {
+		NSLog(@"[JoypadAppleTV] Missing controller profile: %@", controller.vendorName);
 		return;
 	}
 	OSAppleTV *os = OSAppleTV::get_singleton();
@@ -447,6 +454,9 @@ int JoypadAppleTV::joy_id_for_name(const String &p_name) {
 	self.connectedJoypads[@(joy_id)] = controller;
 	NSString *name = controller.vendorName ?: @"Apple TV Controller";
 	os->joy_connection_changed(joy_id, true, String::utf8(name.UTF8String));
+	if (controller.microGamepad && !controller.extendedGamepad) {
+		NSLog(@"[JoypadAppleTV] Siri Remote CONNECTED joy=%d name=%@ buttons=%@ dpads=%@", joy_id, name, controller.physicalInputProfile.buttons.allKeys, controller.physicalInputProfile.dpads.allKeys);
+	}
 	[self configureController:controller];
 	[self updateMenuPolicy];
 	[self installIndirectTouchFallback];
@@ -538,6 +548,28 @@ int JoypadAppleTV::joy_id_for_name(const String &p_name) {
 	};
 }
 
+// Siri Remote compatibility callbacks from the previously working Godot port.
+// Only GCMicroGamepad uses these helpers; physical extended controllers are unchanged.
+- (void)bindLegacyRemoteButton:(GCControllerButtonInput *)button index:(int)index controller:(GCController *)controller {
+	_weakify(self);
+	_weakify(controller);
+	button.valueChangedHandler = ^(GCControllerButtonInput *input, float value, BOOL pressed) {
+		_strongify(self);
+		_strongify(controller);
+		[self sendButton:index pressed:pressed controller:controller];
+	};
+}
+
+- (void)bindLegacyRemoteAxis:(GCControllerAxisInput *)axis index:(int)index invert:(BOOL)invert controller:(GCController *)controller {
+	_weakify(self);
+	_weakify(controller);
+	axis.valueChangedHandler = ^(GCControllerAxisInput *input, float value) {
+		_strongify(self);
+		_strongify(controller);
+		[self sendAxis:index value:(invert ? -value : value) controller:controller];
+	};
+}
+
 - (void)bindAxes:(GCControllerDirectionPad *)dpad xAxis:(int)x_axis yAxis:(int)y_axis controller:(GCController *)controller {
 	_weakify(self);
 	_weakify(controller);
@@ -598,6 +630,24 @@ int JoypadAppleTV::joy_id_for_name(const String &p_name) {
 		return;
 	}
 	micro.allowsRotation = NO;
+
+	// Compatibility enabled by default in this test engine XCFramework. To compare,
+	// set GodotTVOSLegacyRemoteInput=false in the application Info.plist.
+	id legacySetting = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"GodotTVOSLegacyRemoteInput"];
+	BOOL legacyRemote = legacySetting ? [legacySetting boolValue] : YES;
+	if (legacyRemote) {
+		NSLog(@"[JoypadAppleTV] Siri Remote: legacy microGamepad path selected");
+		[self bindLegacyRemoteAxis:micro.dpad.xAxis index:JOY_ANALOG_LX invert:NO controller:controller];
+		[self bindLegacyRemoteAxis:micro.dpad.yAxis index:JOY_ANALOG_LY invert:YES controller:controller];
+		[self bindLegacyRemoteButton:micro.dpad.up index:JOY_DPAD_UP controller:controller];
+		[self bindLegacyRemoteButton:micro.dpad.down index:JOY_DPAD_DOWN controller:controller];
+		[self bindLegacyRemoteButton:micro.dpad.left index:JOY_DPAD_LEFT controller:controller];
+		[self bindLegacyRemoteButton:micro.dpad.right index:JOY_DPAD_RIGHT controller:controller];
+		[self bindButton:micro.buttonA index:JOY_BUTTON_0 controller:controller];
+		[self bindLegacyRemoteButton:micro.buttonX index:JOY_BUTTON_2 controller:controller];
+		[self configureRemoteTouch:controller];
+		return;
+	}
 	// Keep the original relative touch-surface behavior.
 	[self bindAxes:micro.dpad xAxis:JOY_ANALOG_LX yAxis:JOY_ANALOG_LY controller:controller];
 
