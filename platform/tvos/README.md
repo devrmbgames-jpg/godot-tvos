@@ -18,15 +18,19 @@ Build from the repository root:
 scons platform=tvos tools=no target=release_debug arch=arm64 -j8
 scons platform=tvos tools=no target=release arch=arm64 -j8
 
-# Optional debug simulator libraries.
+# Debug and release libraries for Apple Silicon and Intel simulators.
 scons platform=tvos tools=no target=release_debug arch=arm64 simulator=yes -j8
 scons platform=tvos tools=no target=release_debug arch=x86_64 simulator=yes -j8
+scons platform=tvos tools=no target=release arch=arm64 simulator=yes -j8
+scons platform=tvos tools=no target=release arch=x86_64 simulator=yes -j8
 
 # Package the libraries and Xcode project into bin/tvos.zip.
 python3 platform/tvos/build_template.py \
   --debug bin/libgodot.tvos.opt.debug.arm64.a \
   --release bin/libgodot.tvos.opt.arm64.a \
   --debug-simulator bin/libgodot.tvos.opt.debug.arm64.simulator.a bin/libgodot.tvos.opt.debug.x86_64.simulator.a \
+  --release-simulator bin/libgodot.tvos.opt.arm64.simulator.a bin/libgodot.tvos.opt.x86_64.simulator.a \
+  --frameworks-output bin/xcframeworks \
   --output bin/tvos.zip
 ```
 
@@ -39,8 +43,17 @@ selected device or simulator SDK. Bitcode is not enabled.
 simulator libraries. The packager merges simulator architectures with `lipo`
 and puts device and simulator libraries into **separate XCFramework slices**.
 An arm64 device archive must never be merged with an arm64 simulator archive.
-At least one of `--debug` or `--release` is required. Build release simulator
-libraries separately if release exports also need to run in the simulator.
+At least one of `--debug` or `--release` is required. The command above produces
+`libgodot.tvos.debug.xcframework` and `libgodot.tvos.release.xcframework` in
+`bin/xcframeworks`, each supporting device arm64 and simulator arm64/x86_64.
+Both bundles are also included in `tvos.zip` with the Xcode project template.
+The packager checks the generated platform/architecture manifest against its
+input libraries before publishing the outputs.
+
+Use `--smoke-projects bin/tvos-smoke` to render separate `debug` and `release`
+Xcode link-test projects from the matching bundles. These projects contain an
+empty PCK and are intended for build verification, not gameplay. The older
+`--smoke-project PATH` option still renders one project, preferring Debug.
 
 Build the desktop editor from this same branch, for example on a Mac:
 
@@ -173,31 +186,48 @@ GODOT_BIN=/absolute/path/to/custom/editor \
 The fixture archives used by these export tests contain placeholder libraries;
 they test packaging and are not runnable applications.
 
-The **tvOS Builds** GitHub Actions workflow automatically builds two independent
-Apple TV arm64 static export templates on relevant pushes to
-`feature/godot_3_tvos`. It uses the repository's shared `godot-build` action,
-an Intel `macos-26-intel` runner and Xcode 26.3. Building the `.a` files does not
-require signing certificates, an Apple developer team or a game project.
+The **tvOS Builds** GitHub Actions workflow automatically builds complete Debug
+and Release XCFrameworks on relevant pushes to `feature/godot_3_tvos`. Each
+configuration contains an Apple TV arm64 library and a universal simulator
+library with arm64 and x86_64 architectures. All six libraries use the
+repository's shared `godot-build` action, an Intel `macos-26-intel` runner and
+Xcode 26.3, with a separate SCons cache for each target/platform/architecture.
+Building these static libraries and link-test apps does not require signing
+certificates, an Apple developer team or a game project.
 
 Open **Actions → tvOS Builds → the completed run → Artifacts** to download:
 
-| Artifact | Static library inside |
+| Artifact | Contents |
 | --- | --- |
-| `godot-tvos-release_debug-arm64` | `libgodot.tvos.opt.debug.arm64.a` |
-| `godot-tvos-release-arm64` | `libgodot.tvos.opt.arm64.a` |
+| `godot-tvos-xcframeworks` | `libgodot.tvos.debug.xcframework`, `libgodot.tvos.release.xcframework`, and `SHA256SUMS` |
+| `tvos-export-template` | `tvos.zip` with both XCFrameworks and the Xcode project template, plus its SHA-256 checksum |
+| `godot-tvos-release_debug-arm64` | Device `libgodot.tvos.opt.debug.arm64.a` and checksum |
+| `godot-tvos-release-arm64` | Device `libgodot.tvos.opt.arm64.a` and checksum |
+| `godot-tvos-simulator-<target>-<arch>` | Individual simulator static library and checksum |
 
-Each artifact also contains a SHA-256 checksum. The jobs validate the arm64
-architecture and upload their libraries independently, so one failed build
-does not suppress the other successful artifact. Artifacts are retained for
-30 days; the completed job summary also contains a download link. Use GitHub's
-**Re-run jobs** to repeat an existing run.
+The packaging job verifies all downloaded library checksums, creates separate
+device/simulator XCFramework slices, and links unsigned Xcode applications for
+**Debug and Release × device arm64, simulator arm64, simulator x86_64**. It only
+publishes the XCFrameworks and `tvos.zip` after all six links succeed. Each
+individual `.a` uploads independently, so a failed variant does not hide other
+successful libraries. Artifacts are retained for 30 days; the completed job
+summary contains download links. Use GitHub's **Re-run jobs** to repeat a run.
 
-The optional `workflow_dispatch` input `build_simulators` additionally builds
-simulator arm64/x86_64 libraries, packages `tvos.zip`, and links unsigned device
-and simulator apps using Xcode. The link-test application has an empty PCK and
-is not intended for gameplay. GitHub displays the manual **Run workflow**
-button once the workflow is present on the repository's default branch.
+The `workflow_dispatch` input `build_simulators` defaults to `true`. Setting it
+to `false` requests only the two device `.a` files; push builds always include
+the full XCFrameworks. GitHub displays the manual **Run workflow** button once
+the workflow is present on the repository's default branch.
 Enable Actions for the fork if GitHub has disabled its inherited workflows.
+
+For a custom Godot editor built from this branch, select `tvos.zip` as the
+custom tvOS export template. For an existing Xcode application, unpack the
+XCFramework artifact and link the bundle matching the exported configuration
+(Debug or Release). Add it under **Frameworks, Libraries, and Embedded Content**
+as **Do Not Embed**, since it contains static libraries. Preserve the scene
+manifest and linker settings described above; the XCFramework packages the
+engine library but does not replace the application's Info.plist or native
+integration code. To verify the unpacked bundle files, run
+`shasum -a 256 -c SHA256SUMS` from the artifact's root directory.
 
 Before shipping an application, check these behaviors on actual hardware:
 

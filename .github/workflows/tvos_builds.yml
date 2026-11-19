@@ -9,21 +9,32 @@ on:
       - "drivers/**"
       - "core/**"
       - "modules/**"
+      - "main/**"
+      - "scene/**"
+      - "servers/**"
+      - "thirdparty/**"
+      - "version.py"
       - "editor/editor_export.*"
       - "methods.py"
       - "SConstruct"
       - ".github/workflows/tvos_builds.yml"
       - ".github/actions/godot-build/**"
       - ".github/actions/godot-deps/**"
+      - ".github/actions/godot-cache-restore/**"
+      - ".github/actions/godot-cache-save/**"
   workflow_dispatch:
     inputs:
       build_simulators:
-        description: Also build simulator libraries, package tvos.zip and link Xcode projects
+        description: Build complete XCFrameworks and tvos.zip, including both simulator architectures
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
+
+defaults:
+  run:
+    shell: bash
 
 env:
   # Keep the SDK and compiler from the same installed Xcode.
@@ -120,14 +131,23 @@ jobs:
           cache-name: tvos-device-arm64-${{ matrix.target }}
 
   simulator:
-    name: Simulator ${{ matrix.arch }} - Debug template
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_simulators }}
+    name: Simulator ${{ matrix.arch }} - ${{ matrix.config.name }} template
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_simulators }}
     runs-on: macos-26-intel
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         arch: [arm64, x86_64]
+        config:
+          - name: Debug
+            target: release_debug
+            suffix: opt.debug
+          - name: Release
+            target: release
+            suffix: opt
+    env:
+      LIBRARY: libgodot.tvos.${{ matrix.config.suffix }}.${{ matrix.arch }}.simulator.a
     steps:
       - uses: actions/checkout@v4
 
@@ -136,36 +156,61 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Report Apple simulator toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk appletvsimulator --show-sdk-version
+
+      - name: Restore simulator build cache
+        uses: ./.github/actions/godot-cache-restore
+        continue-on-error: true
+        with:
+          cache-name: tvos-simulator-${{ matrix.arch }}-${{ matrix.config.target }}
+
       - name: Compile simulator template
+        id: build
         uses: ./.github/actions/godot-build
         with:
           platform: tvos
-          target: release_debug
+          target: ${{ matrix.config.target }}
           tools: false
           sconsflags: >-
             arch=${{ matrix.arch }} simulator=yes
             TVOSPATH="${{ env.DEVELOPER_DIR }}/Toolchains/XcodeDefault.xctoolchain"
             debug_symbols=no verbose=yes -j4 -k
 
-      - name: Verify simulator library
-        run: >-
-          xcrun lipo bin/libgodot.tvos.opt.debug.${{ matrix.arch }}.simulator.a
-          -verify_arch ${{ matrix.arch }}
+      - name: Verify simulator library and create checksum
+        working-directory: bin
+        run: |
+          test -s "$LIBRARY"
+          file "$LIBRARY"
+          xcrun lipo -info "$LIBRARY"
+          xcrun lipo "$LIBRARY" -verify_arch ${{ matrix.arch }}
+          shasum -a 256 "$LIBRARY" > "$LIBRARY.sha256"
 
       - name: Upload simulator library
         uses: actions/upload-artifact@v4
         with:
-          name: godot-tvos-simulator-${{ matrix.arch }}
-          path: bin/libgodot.tvos.opt.debug.${{ matrix.arch }}.simulator.a
+          name: godot-tvos-simulator-${{ matrix.config.target }}-${{ matrix.arch }}
+          path: |
+            bin/${{ env.LIBRARY }}
+            bin/${{ env.LIBRARY }}.sha256
           if-no-files-found: error
           retention-days: 30
 
+      - name: Save simulator build cache
+        if: ${{ !cancelled() && steps.build.outcome != 'skipped' }}
+        uses: ./.github/actions/godot-cache-save
+        continue-on-error: true
+        with:
+          cache-name: tvos-simulator-${{ matrix.arch }}-${{ matrix.config.target }}
+
   package:
-    name: Package and link Xcode projects
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_simulators }}
+    name: Package XCFrameworks and link all variants
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_simulators }}
     needs: [template, simulator]
     runs-on: macos-26-intel
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -173,11 +218,26 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: actions/download-artifact@v4
+      - name: Validate XCFramework packaging
+        run: python -m unittest discover -s platform/tvos/tests -p 'test_build_template.py'
+
+      - name: Download device libraries
+        uses: actions/download-artifact@v4
         with:
-          pattern: godot-tvos-*
+          pattern: godot-tvos-release*-arm64
           path: bin
           merge-multiple: true
+
+      - name: Download simulator libraries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: godot-tvos-simulator-*
+          path: bin
+          merge-multiple: true
+
+      - name: Verify downloaded libraries
+        working-directory: bin
+        run: shasum -a 256 -c ./*.sha256
 
       - name: Create XCFrameworks and export template
         run: >-
@@ -185,28 +245,89 @@ jobs:
           --debug bin/libgodot.tvos.opt.debug.arm64.a
           --release bin/libgodot.tvos.opt.arm64.a
           --debug-simulator bin/libgodot.tvos.opt.debug.arm64.simulator.a bin/libgodot.tvos.opt.debug.x86_64.simulator.a
+          --release-simulator bin/libgodot.tvos.opt.arm64.simulator.a bin/libgodot.tvos.opt.x86_64.simulator.a
+          --frameworks-output bin/xcframeworks
           --output bin/tvos.zip
-          --smoke-project bin/tvos-smoke
+          --smoke-projects bin/tvos-smoke
 
-      - name: Link an unsigned tvOS application
-        run: >-
-          xcodebuild -project bin/tvos-smoke/TVOSSmoke.xcodeproj
-          -scheme TVOSSmoke -configuration Debug
-          -destination 'generic/platform=tvOS'
-          -derivedDataPath bin/device-derived
-          CODE_SIGNING_ALLOWED=NO build
+      - name: Link Debug and Release Apple TV applications
+        run: |
+          mkdir -p bin/link-logs
+          for variant in debug release; do
+            if [ "$variant" = debug ]; then configuration=Debug; else configuration=Release; fi
+            xcodebuild -project "bin/tvos-smoke/$variant/TVOSSmoke.xcodeproj" \
+              -scheme TVOSSmoke -configuration "$configuration" \
+              -sdk appletvos -destination 'generic/platform=tvOS' \
+              -derivedDataPath "bin/derived-$variant-device" \
+              ARCHS=arm64 ONLY_ACTIVE_ARCH=NO EXCLUDED_ARCHS= CODE_SIGNING_ALLOWED=NO build \
+              2>&1 | tee "bin/link-logs/$variant-device-arm64.log"
+          done
 
-      - name: Link an unsigned tvOS Simulator application
-        run: >-
-          xcodebuild -project bin/tvos-smoke/TVOSSmoke.xcodeproj
-          -scheme TVOSSmoke -configuration Debug
-          -destination 'generic/platform=tvOS Simulator'
-          -derivedDataPath bin/simulator-derived
-          CODE_SIGNING_ALLOWED=NO build
+      - name: Link both configurations and architectures of tvOS Simulator applications
+        run: |
+          for variant in debug release; do
+            if [ "$variant" = debug ]; then configuration=Debug; else configuration=Release; fi
+            for arch in arm64 x86_64; do
+              xcodebuild -project "bin/tvos-smoke/$variant/TVOSSmoke.xcodeproj" \
+                -scheme TVOSSmoke -configuration "$configuration" \
+                -sdk appletvsimulator -destination 'generic/platform=tvOS Simulator' \
+                -derivedDataPath "bin/derived-$variant-simulator-$arch" \
+                "ARCHS=$arch" ONLY_ACTIVE_ARCH=NO EXCLUDED_ARCHS= CODE_SIGNING_ALLOWED=NO build \
+                2>&1 | tee "bin/link-logs/$variant-simulator-$arch.log"
+            done
+          done
+
+      - name: Create distribution checksums
+        run: |
+          python - <<'PYTHON'
+          import hashlib
+          from pathlib import Path
+
+          root = Path("bin/xcframeworks")
+          checksums = []
+          for path in sorted(root.rglob("*")):
+              if path.is_file():
+                  with path.open("rb") as stream:
+                      digest = hashlib.file_digest(stream, "sha256").hexdigest()
+                  checksums.append(f"{digest}  {path.relative_to(root).as_posix()}\n")
+          (root / "SHA256SUMS").write_text("".join(checksums))
+          PYTHON
+          cd bin
+          shasum -a 256 tvos.zip > tvos.zip.sha256
+
+      - name: Upload XCFrameworks
+        id: xcframeworks
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-tvos-xcframeworks
+          path: bin/xcframeworks/
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload export template
+        id: export-template
         uses: actions/upload-artifact@v4
         with:
           name: tvos-export-template
-          path: bin/tvos.zip
+          path: |
+            bin/tvos.zip
+            bin/tvos.zip.sha256
           if-no-files-found: error
+          retention-days: 30
+
+      - name: Write download links
+        env:
+          XCFRAMEWORKS_URL: ${{ steps.xcframeworks.outputs.artifact-url }}
+          EXPORT_TEMPLATE_URL: ${{ steps.export-template.outputs.artifact-url }}
+        run: |
+          printf '### Godot tvOS XCFrameworks\n\nDebug and Release: Apple TV arm64 + Simulator arm64/x86_64.\n\nAll six configurations passed unsigned Xcode application linking.\n\n[Download XCFrameworks](%s)\n\n[Download tvos.zip export template](%s)\n' \
+            "$XCFRAMEWORKS_URL" "$EXPORT_TEMPLATE_URL" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload failed link diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-tvos-xcode-link-logs
+          path: bin/link-logs/
+          if-no-files-found: ignore
+          retention-days: 14
