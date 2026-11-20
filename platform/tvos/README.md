@@ -125,7 +125,7 @@ temporarily use UIKit. Controller callbacks run on the main queue.
 | Control | Godot event |
 | --- | --- |
 | Center click | Button 0 (`JOY_SONY_X`, A / accept) |
-| Outer ring | Buttons 12–15 (`JOY_DPAD_UP/DOWN/LEFT/RIGHT`) |
+| Outer ring | Buttons 12–15 (`JOY_DPAD_UP/DOWN/LEFT/RIGHT`) **and** direction axes 0/1 (`JOY_ANALOG_LX/LY`) |
 | Touch surface movement | Axes 0/1 (left stick convention; Y inverted) |
 | Play/Pause | Button 2 (`JOY_SONY_SQUARE`) |
 | Menu/Back, while overridden | Button 1 (`JOY_SONY_CIRCLE`) |
@@ -138,8 +138,14 @@ so it must not be bound as select when a physical ring is present.
 In both input modes, physical ring clicks come from
 `physicalInputProfile.dpads[GCInputDirectionalCardinalDpad]` using
 `pressedChangedHandler` on its four buttons, while touch swipes continue
-using `micro.dpad` axes 0/1. Older remotes without a physical cardinal pad
-keep their existing `micro.dpad` digital D-pad fallback.
+using `micro.dpad` axes 0/1. Cardinal ring clicks **also update** analog
+axes 0/1 with a discrete vector: left=(-1, 0), right=(+1, 0),
+up=(0, -1), down=(0, +1); release restores the most recent touch vector
+or neutral, never a stuck direction. While a ring direction is held it
+takes priority over touch-axis updates, and touch-up does not prematurely
+clear the held ring direction. Both the legacy-compatible and alternate
+routing paths use this behavior. Older remotes without a physical cardinal
+pad keep their existing `micro.dpad` digital D-pad fallback.
 Touch contact (Godot button 5) is separate from directions 12–15 and is
 intentionally unchanged.
 This rule applies in both the default legacy-compatible mode and the

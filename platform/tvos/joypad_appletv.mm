@@ -140,6 +140,23 @@ typedef NS_OPTIONS(NSUInteger, AppleTVRemoteTouchSource) {
 }
 @end
 
+// Keep independent vectors for surface swipes and the physical click ring.
+// When the ring is held its discrete direction takes priority; on release,
+// restore the last touch vector rather than leaving a stuck analog direction.
+@interface JoypadAppleTVRemoteDirectionState : NSObject
+@property(nonatomic, assign) float touchX;
+@property(nonatomic, assign) float touchY;
+@property(nonatomic, assign) float sentX;
+@property(nonatomic, assign) float sentY;
+@property(nonatomic, assign) BOOL ringUp;
+@property(nonatomic, assign) BOOL ringDown;
+@property(nonatomic, assign) BOOL ringLeft;
+@property(nonatomic, assign) BOOL ringRight;
+@end
+
+@implementation JoypadAppleTVRemoteDirectionState
+@end
+
 @interface JoypadAppleTVObserver () <JoypadAppleTVIndirectTouchReceiver>
 @property(assign, nonatomic) BOOL isObserving;
 @property(assign, nonatomic) BOOL isProcessing;
@@ -150,6 +167,7 @@ typedef NS_OPTIONS(NSUInteger, AppleTVRemoteTouchSource) {
 @property(strong, nonatomic) NSMutableArray<GCController *> *joypadsQueue;
 @property(strong, nonatomic) NSMutableSet<GCController *> *controllersWithNativeTouchpad;
 @property(strong, nonatomic) NSMapTable<GCController *, NSNumber *> *remoteTouchSources;
+@property(strong, nonatomic) NSMapTable<GCController *, JoypadAppleTVRemoteDirectionState *> *remoteDirectionStates;
 @property(strong, nonatomic) JoypadAppleTVIndirectTouchRecognizer *indirectTouchRecognizer;
 @property(weak, nonatomic) UIWindow *indirectTouchWindow;
 @property(weak, nonatomic) GCController *indirectTouchController;
@@ -166,6 +184,9 @@ typedef NS_OPTIONS(NSUInteger, AppleTVRemoteTouchSource) {
 - (void)resetController:(GCController *)controller;
 - (void)clearControllerHandlers:(GCController *)controller;
 - (void)configureController:(GCController *)controller;
+- (void)setRemoteTouchAxis:(int)axis value:(float)value controller:(GCController *)controller;
+- (void)updateRemoteDirectionAxes:(GCController *)controller;
+- (void)bindRemoteRingButtons:(GCControllerDirectionPad *)ring controller:(GCController *)controller;
 @end
 
 JoypadAppleTV::JoypadAppleTV() {
@@ -201,6 +222,7 @@ int JoypadAppleTV::joy_id_for_name(const String &p_name) {
 		self.joypadsQueue = [NSMutableArray array];
 		self.controllersWithNativeTouchpad = [NSMutableSet set];
 		self.remoteTouchSources = [NSMapTable strongToStrongObjectsMapTable];
+		self.remoteDirectionStates = [NSMapTable strongToStrongObjectsMapTable];
 	}
 	return self;
 }
@@ -279,6 +301,52 @@ int JoypadAppleTV::joy_id_for_name(const String &p_name) {
 	}
 }
 
+- (JoypadAppleTVRemoteDirectionState *)remoteDirectionState:(GCController *)controller {
+	if (!controller) {
+		return nil;
+	}
+	JoypadAppleTVRemoteDirectionState *state = [self.remoteDirectionStates objectForKey:controller];
+	if (!state) {
+		state = [JoypadAppleTVRemoteDirectionState new];
+		[self.remoteDirectionStates setObject:state forKey:controller];
+	}
+	return state;
+}
+
+- (void)updateRemoteDirectionAxes:(GCController *)controller {
+	if (![self canSendInput] || [self getJoyIdForController:controller] < 0) {
+		return;
+	}
+	JoypadAppleTVRemoteDirectionState *state = [self remoteDirectionState:controller];
+	BOOL ringActive = state.ringUp || state.ringDown || state.ringLeft || state.ringRight;
+	float x = ringActive ? float(int(state.ringRight) - int(state.ringLeft)) : state.touchX;
+	// GameController positive Y points up; Godot left-stick Y points down.
+	float y = ringActive ? float(int(state.ringDown) - int(state.ringUp)) : state.touchY;
+	if (x != state.sentX) {
+		state.sentX = x;
+		[self sendAxis:JOY_ANALOG_LX value:x controller:controller];
+	}
+	if (y != state.sentY) {
+		state.sentY = y;
+		[self sendAxis:JOY_ANALOG_LY value:y controller:controller];
+	}
+}
+
+- (void)setRemoteTouchAxis:(int)axis value:(float)value controller:(GCController *)controller {
+	if (![self canSendInput] || [self getJoyIdForController:controller] < 0) {
+		return;
+	}
+	JoypadAppleTVRemoteDirectionState *state = [self remoteDirectionState:controller];
+	if (axis == JOY_ANALOG_LX) {
+		state.touchX = value;
+	} else if (axis == JOY_ANALOG_LY) {
+		state.touchY = value;
+	} else {
+		return;
+	}
+	[self updateRemoteDirectionAxes:controller];
+}
+
 - (void)resetController:(GCController *)controller {
 	int joy_id = [self getJoyIdForController:controller];
 	OSAppleTV *os = OSAppleTV::get_singleton();
@@ -293,6 +361,7 @@ int JoypadAppleTV::joy_id_for_name(const String &p_name) {
 		}
 	}
 	[self.remoteTouchSources removeObjectForKey:controller];
+	[self.remoteDirectionStates removeObjectForKey:controller];
 }
 
 - (void)resetInput {
@@ -406,6 +475,7 @@ int JoypadAppleTV::joy_id_for_name(const String &p_name) {
 	[self.joypadsQueue removeAllObjects];
 	[self.controllersWithNativeTouchpad removeAllObjects];
 	[self.remoteTouchSources removeAllObjects];
+	[self.remoteDirectionStates removeAllObjects];
 }
 
 - (void)dealloc {
@@ -566,7 +636,7 @@ int JoypadAppleTV::joy_id_for_name(const String &p_name) {
 	axis.valueChangedHandler = ^(GCControllerAxisInput *input, float value) {
 		_strongify(self);
 		_strongify(controller);
-		[self sendAxis:index value:(invert ? -value : value) controller:controller];
+		[self setRemoteTouchAxis:index value:(invert ? -value : value) controller:controller];
 	};
 }
 
@@ -586,6 +656,51 @@ int JoypadAppleTV::joy_id_for_name(const String &p_name) {
 	[self bindButton:dpad.down index:JOY_DPAD_DOWN controller:controller];
 	[self bindButton:dpad.left index:JOY_DPAD_LEFT controller:controller];
 	[self bindButton:dpad.right index:JOY_DPAD_RIGHT controller:controller];
+}
+
+// Siri Remote swipes use axes 0/1. They are merged with the physical ring
+// direction so a touch update cannot override a held ring press.
+- (void)bindRemoteTouchAxes:(GCControllerDirectionPad *)dpad controller:(GCController *)controller {
+	_weakify(self);
+	_weakify(controller);
+	dpad.valueChangedHandler = ^(GCControllerDirectionPad *pad, float x_value, float y_value) {
+		_strongify(self);
+		_strongify(controller);
+		[self setRemoteTouchAxis:JOY_ANALOG_LX value:x_value controller:controller];
+		[self setRemoteTouchAxis:JOY_ANALOG_LY value:-y_value controller:controller];
+	};
+}
+
+// Each cardinal button sends BOTH a discrete Godot D-pad button and an analog
+// left-stick direction, matching the behavior that a surface swipe provides.
+- (void)bindRemoteRingButton:(GCControllerButtonInput *)button index:(int)index controller:(GCController *)controller {
+	_weakify(self);
+	_weakify(controller);
+	button.pressedChangedHandler = ^(GCControllerButtonInput *input, float value, BOOL pressed) {
+		_strongify(self);
+		_strongify(controller);
+		if (![self canSendInput] || [self getJoyIdForController:controller] < 0) {
+			return;
+		}
+		JoypadAppleTVRemoteDirectionState *state = [self remoteDirectionState:controller];
+		switch (index) {
+			case JOY_DPAD_UP: state.ringUp = pressed; break;
+			case JOY_DPAD_DOWN: state.ringDown = pressed; break;
+			case JOY_DPAD_LEFT: state.ringLeft = pressed; break;
+			case JOY_DPAD_RIGHT: state.ringRight = pressed; break;
+			default: return;
+		}
+		[self updateRemoteDirectionAxes:controller];
+		NSLog(@"[JoypadAppleTV] Siri Remote RING button=%d pressed=%d direction=(%+.1f,%+.1f)", index, (int)pressed, (double)state.sentX, (double)state.sentY);
+		[self sendButton:index pressed:pressed controller:controller];
+	};
+}
+
+- (void)bindRemoteRingButtons:(GCControllerDirectionPad *)ring controller:(GCController *)controller {
+	[self bindRemoteRingButton:ring.up index:JOY_DPAD_UP controller:controller];
+	[self bindRemoteRingButton:ring.down index:JOY_DPAD_DOWN controller:controller];
+	[self bindRemoteRingButton:ring.left index:JOY_DPAD_LEFT controller:controller];
+	[self bindRemoteRingButton:ring.right index:JOY_DPAD_RIGHT controller:controller];
 }
 
 - (void)bindTrigger:(GCControllerButtonInput *)trigger button:(int)button axis:(int)axis controller:(GCController *)controller {
@@ -672,8 +787,8 @@ int JoypadAppleTV::joy_id_for_name(const String &p_name) {
 			// Only the cardinal D-pad corresponds to actual outer-ring clicks.
 			// pressedChangedHandler is used for these physical buttons; binding
 			// both micro.dpad and cardinal would produce duplicate directions.
-			NSLog(@"[JoypadAppleTV] Siri Remote: physical ring D-pad enabled (buttons 12-15)");
-			[self bindDpadButtons:physicalRing controller:controller];
+			NSLog(@"[JoypadAppleTV] Siri Remote: physical ring enabled (D-pad buttons 12-15 + direction axes 0/1)");
+			[self bindRemoteRingButtons:physicalRing controller:controller];
 		} else {
 			// Original directional behavior for 1st-generation touch remotes.
 			NSLog(@"[JoypadAppleTV] Siri Remote: legacy touchpad D-pad enabled");
@@ -688,13 +803,17 @@ int JoypadAppleTV::joy_id_for_name(const String &p_name) {
 		return;
 	}
 	// Keep the original relative touch-surface behavior.
-	[self bindAxes:micro.dpad xAxis:JOY_ANALOG_LX yAxis:JOY_ANALOG_LY controller:controller];
+	[self bindRemoteTouchAxes:micro.dpad controller:controller];
 
 	GCControllerDirectionPad *cardinal = nil;
 	if (@available(tvOS 15.0, *)) {
 		cardinal = controller.physicalInputProfile.dpads[GCInputDirectionalCardinalDpad];
 	}
-	[self bindDpadButtons:cardinal ?: micro.dpad controller:controller];
+	if (cardinal) {
+		[self bindRemoteRingButtons:cardinal controller:controller];
+	} else {
+		[self bindDpadButtons:micro.dpad controller:controller];
+	}
 	[self bindRemoteSelectForController:controller];
 	[self bindButton:micro.buttonX index:JOY_BUTTON_2 controller:controller];
 	[self configureRemoteTouch:controller];
@@ -711,9 +830,13 @@ int JoypadAppleTV::joy_id_for_name(const String &p_name) {
 		[self sendButton:APPLETV_REMOTE_TOUCH_BUTTON pressed:sources != 0 controller:controller];
 	}
 	if (old_sources && !sources && controller.microGamepad.dpad.isAnalog) {
-		// Some relative touch profiles retain their last vector after lift.
-		[self sendAxis:JOY_ANALOG_LX value:0 controller:controller];
-		[self sendAxis:JOY_ANALOG_LY value:0 controller:controller];
+		// Some touch profiles retain the last raw vector after finger lift.
+		// Reset only the touch vector. A held physical ring must continue to
+		// drive axes 0/1 until the corresponding cardinal button is released.
+		JoypadAppleTVRemoteDirectionState *state = [self remoteDirectionState:controller];
+		state.touchX = 0.0f;
+		state.touchY = 0.0f;
+		[self updateRemoteDirectionAxes:controller];
 	}
 }
 
