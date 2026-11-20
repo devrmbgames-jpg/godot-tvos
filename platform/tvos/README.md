@@ -131,10 +131,15 @@ temporarily use UIKit. Controller callbacks run on the main queue.
 | Menu/Back, while overridden | Button 1 (`JOY_SONY_CIRCLE`) |
 | Touch contact, when supplied by the profile | Button 5 (retained port convention) |
 
-New Siri Remotes use `GCInputDirectionalCenterButton` and
-`GCInputDirectionalCardinalDpad` independently. A click on the ring cannot
-also emit button A through the whole-clickpad `micro.buttonA` element.
-Older micro profiles retain their immediate button-A handling.
+On 2nd/3rd generation Siri Remotes, only the dedicated
+`GCInputDirectionalCenterButton` is mapped to Godot button 0 (select).
+`micro.buttonA` represents the **whole clickpad, including the outer ring**,
+so it must not be bound as select when a physical ring is present.
+This rule applies in both the default legacy-compatible mode and the
+alternate input route. Swipe axes and D-pad navigation are unchanged.
+First-generation remotes without a distinct ring/center retain their
+original clickpad select behavior. A partial profile with a ring but no
+center deliberately disables select to prevent accidental selections.
 
 `Engine.get_singleton("tvOS").set_overrides_menu_button(true)` lets the game
 handle Menu/Back; `false` restores the system action. The original default

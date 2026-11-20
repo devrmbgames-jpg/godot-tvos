@@ -599,6 +599,28 @@ int JoypadAppleTV::joy_id_for_name(const String &p_name) {
 	};
 }
 
+// A whole-clickpad click covers the outer ring on newer Siri Remotes.
+// Only the dedicated center button may confirm selection when a ring exists.
+- (void)bindRemoteSelectForController:(GCController *)controller {
+	GCPhysicalInputProfile *profile = controller.physicalInputProfile;
+	GCControllerButtonInput *center = nil;
+	GCControllerDirectionPad *ring = nil;
+	if (@available(tvOS 15.0, *)) {
+		center = profile.buttons[GCInputDirectionalCenterButton];
+		ring = profile.dpads[GCInputDirectionalCardinalDpad];
+	}
+	if (center) {
+		NSLog(@"[JoypadAppleTV] Siri Remote: center-only select enabled");
+		[self bindButton:center index:JOY_BUTTON_0 controller:controller];
+	} else if (!ring) {
+		// First-generation Siri Remote has no distinct ring/center button.
+		NSLog(@"[JoypadAppleTV] Siri Remote: first-gen touchpad select enabled");
+		[self bindButton:controller.microGamepad.buttonA index:JOY_BUTTON_0 controller:controller];
+	} else {
+		NSLog(@"[JoypadAppleTV] Siri Remote: ring without center, select disabled (avoid false A)");
+	}
+}
+
 - (void)configureController:(GCController *)controller {
 	// Individual callbacks have exactly one owner; no profile callback forwards
 	// a second copy of sticks, D-Pad or face-button events.
@@ -643,7 +665,7 @@ int JoypadAppleTV::joy_id_for_name(const String &p_name) {
 		[self bindLegacyRemoteButton:micro.dpad.down index:JOY_DPAD_DOWN controller:controller];
 		[self bindLegacyRemoteButton:micro.dpad.left index:JOY_DPAD_LEFT controller:controller];
 		[self bindLegacyRemoteButton:micro.dpad.right index:JOY_DPAD_RIGHT controller:controller];
-		[self bindButton:micro.buttonA index:JOY_BUTTON_0 controller:controller];
+		[self bindRemoteSelectForController:controller];
 		[self bindLegacyRemoteButton:micro.buttonX index:JOY_BUTTON_2 controller:controller];
 		[self configureRemoteTouch:controller];
 		return;
@@ -652,34 +674,11 @@ int JoypadAppleTV::joy_id_for_name(const String &p_name) {
 	[self bindAxes:micro.dpad xAxis:JOY_ANALOG_LX yAxis:JOY_ANALOG_LY controller:controller];
 
 	GCControllerDirectionPad *cardinal = nil;
-	GCControllerButtonInput *center = nil;
 	if (@available(tvOS 15.0, *)) {
 		cardinal = controller.physicalInputProfile.dpads[GCInputDirectionalCardinalDpad];
-		center = controller.physicalInputProfile.buttons[GCInputDirectionalCenterButton];
 	}
 	[self bindDpadButtons:cardinal ?: micro.dpad controller:controller];
-	if (center) {
-		// buttonA covers the WHOLE clickpad, including the ring. Only the
-		// named center button may emit A on 2nd/3rd generation Siri Remotes.
-		[self bindButton:center index:JOY_BUTTON_0 controller:controller];
-	} else {
-		_weakify(self);
-		_weakify(controller);
-		micro.buttonA.pressedChangedHandler = ^(GCControllerButtonInput *input, float value, BOOL pressed) {
-			_strongify(self);
-			_strongify(controller);
-			GCControllerDirectionPad *ring = nil;
-			if (@available(tvOS 14.5, *)) {
-				ring = controller.physicalInputProfile.dpads[GCInputDirectionalCardinalDpad];
-			}
-			// Legacy profiles have no ring; their A stays an immediate press.
-			// If a partial profile exposes a ring but no center, suppress its A.
-			if (pressed && (ring.up.isPressed || ring.down.isPressed || ring.left.isPressed || ring.right.isPressed)) {
-				return;
-			}
-			[self sendButton:JOY_BUTTON_0 pressed:pressed controller:controller];
-		};
-	}
+	[self bindRemoteSelectForController:controller];
 	[self bindButton:micro.buttonX index:JOY_BUTTON_2 controller:controller];
 	[self configureRemoteTouch:controller];
 }
