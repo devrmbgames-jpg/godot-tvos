@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## tvOS - 2026-11-21
+
+### Исправлено
+
+- Возврат из другого приложения восстанавливает игровой цикл и ввод независимо от доступности аудио. Аудиосессия повторно активируется при возврате, включая пропущенное окончание прерывания и отложенные уведомления после приостановки процесса. Ошибка аудио не останавливает рендер; события в фоне не возобновляют звук или видео.
+
 ## [3.6.3] - 2026-08-22
 
 See the [release announcement](https://godotengine.org/article/maintenance-release-godot-3-6-3) for details.

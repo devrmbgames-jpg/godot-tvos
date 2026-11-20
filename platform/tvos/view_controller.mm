@@ -220,21 +220,25 @@
 
 - (BOOL)playVideoAtPath:(NSString *)filePath volume:(float)videoVolume audio:(NSString *)audioTrack subtitle:(NSString *)subtitleTrack {
 	// If we are showing some video already, reuse existing view for new video.
-	if (self.videoView) {
-		if (!self.videoView.superview) {
-			[self.view addSubview:self.videoView];
-		}
-		return [self.videoView playVideoAtPath:filePath volume:videoVolume audio:audioTrack subtitle:subtitleTrack];
-	} else {
+	if (!self.videoView) {
 		// Create autoresizing view for video playback.
 		GodotNativeVideoView *videoView = [[GodotNativeVideoView alloc] initWithFrame:self.view.bounds];
 		videoView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 		[self.view addSubview:videoView];
 
 		self.videoView = videoView;
-
-		return [self.videoView playVideoAtPath:filePath volume:videoVolume audio:audioTrack subtitle:subtitleTrack];
 	}
+	if (!self.videoView.superview) {
+		[self.view addSubview:self.videoView];
+	}
+	// Apply the audio gate before playVideoAtPath can start a new AVPlayer.
+	OSAppleTV *os = OSAppleTV::get_singleton();
+	if (os && os->can_play_audio()) {
+		[self.videoView focusVideo];
+	} else {
+		[self.videoView unfocusVideo];
+	}
+	return [self.videoView playVideoAtPath:filePath volume:videoVolume audio:audioTrack subtitle:subtitleTrack];
 }
 
 @end
