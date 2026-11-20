@@ -135,8 +135,15 @@ On 2nd/3rd generation Siri Remotes, only the dedicated
 `GCInputDirectionalCenterButton` is mapped to Godot button 0 (select).
 `micro.buttonA` represents the **whole clickpad, including the outer ring**,
 so it must not be bound as select when a physical ring is present.
+In both input modes, physical ring clicks come from
+`physicalInputProfile.dpads[GCInputDirectionalCardinalDpad]` using
+`pressedChangedHandler` on its four buttons, while touch swipes continue
+using `micro.dpad` axes 0/1. Older remotes without a physical cardinal pad
+keep their existing `micro.dpad` digital D-pad fallback.
+Touch contact (Godot button 5) is separate from directions 12–15 and is
+intentionally unchanged.
 This rule applies in both the default legacy-compatible mode and the
-alternate input route. Swipe axes and D-pad navigation are unchanged.
+alternate input route.
 First-generation remotes without a distinct ring/center retain their
 original clickpad select behavior. A partial profile with a ring but no
 center deliberately disables select to prevent accidental selections.

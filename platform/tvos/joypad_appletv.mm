@@ -659,12 +659,29 @@ int JoypadAppleTV::joy_id_for_name(const String &p_name) {
 	BOOL legacyRemote = legacySetting ? [legacySetting boolValue] : YES;
 	if (legacyRemote) {
 		NSLog(@"[JoypadAppleTV] Siri Remote: legacy microGamepad path selected");
+		// The primary micro.dpad is the entire touch surface. Preserve its
+		// analog axes for swipes, but do not use its digital buttons as the
+		// physical outer ring on 2nd/3rd generation Siri Remotes.
 		[self bindLegacyRemoteAxis:micro.dpad.xAxis index:JOY_ANALOG_LX invert:NO controller:controller];
 		[self bindLegacyRemoteAxis:micro.dpad.yAxis index:JOY_ANALOG_LY invert:YES controller:controller];
-		[self bindLegacyRemoteButton:micro.dpad.up index:JOY_DPAD_UP controller:controller];
-		[self bindLegacyRemoteButton:micro.dpad.down index:JOY_DPAD_DOWN controller:controller];
-		[self bindLegacyRemoteButton:micro.dpad.left index:JOY_DPAD_LEFT controller:controller];
-		[self bindLegacyRemoteButton:micro.dpad.right index:JOY_DPAD_RIGHT controller:controller];
+		GCControllerDirectionPad *physicalRing = nil;
+		if (@available(tvOS 15.0, *)) {
+			physicalRing = controller.physicalInputProfile.dpads[GCInputDirectionalCardinalDpad];
+		}
+		if (physicalRing) {
+			// Only the cardinal D-pad corresponds to actual outer-ring clicks.
+			// pressedChangedHandler is used for these physical buttons; binding
+			// both micro.dpad and cardinal would produce duplicate directions.
+			NSLog(@"[JoypadAppleTV] Siri Remote: physical ring D-pad enabled (buttons 12-15)");
+			[self bindDpadButtons:physicalRing controller:controller];
+		} else {
+			// Original directional behavior for 1st-generation touch remotes.
+			NSLog(@"[JoypadAppleTV] Siri Remote: legacy touchpad D-pad enabled");
+			[self bindLegacyRemoteButton:micro.dpad.up index:JOY_DPAD_UP controller:controller];
+			[self bindLegacyRemoteButton:micro.dpad.down index:JOY_DPAD_DOWN controller:controller];
+			[self bindLegacyRemoteButton:micro.dpad.left index:JOY_DPAD_LEFT controller:controller];
+			[self bindLegacyRemoteButton:micro.dpad.right index:JOY_DPAD_RIGHT controller:controller];
+		}
 		[self bindRemoteSelectForController:controller];
 		[self bindLegacyRemoteButton:micro.buttonX index:JOY_BUTTON_2 controller:controller];
 		[self configureRemoteTouch:controller];
