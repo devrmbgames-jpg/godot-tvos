@@ -86,10 +86,24 @@ static AppDelegate *delegateSingleton = nil;
 	if (!self.engineInitialized || !OSAppleTV::get_singleton()) {
 		return;
 	}
-	if (self.sceneActive && !self.audioInterrupted && self.window) {
+	// Audio availability must never suspend the foreground game loop.
+	OSAppleTV::get_singleton()->set_audio_enabled(self.sceneActive && !self.audioInterrupted && self.window);
+	if (self.sceneActive && self.window) {
 		OSAppleTV::get_singleton()->on_focus_in();
 	} else {
 		OSAppleTV::get_singleton()->on_focus_out();
+	}
+}
+
+- (void)activateAudioSession {
+	if (!self.sceneActive || !self.window) {
+		return;
+	}
+	NSError *error = nil;
+	BOOL activated = [[AVAudioSession sharedInstance] setActive:YES error:&error];
+	self.audioInterrupted = !activated;
+	if (!activated) {
+		NSLog(@"Unable to reactivate the tvOS audio session: %@", error);
 	}
 }
 
@@ -166,6 +180,8 @@ static AppDelegate *delegateSingleton = nil;
 - (void)sceneDidBecomeActive:(UIScene *)scene {
 	if ([self isGameScene:scene]) {
 		self.sceneActive = YES;
+		// An interruption need not have a matching Ended notification.
+		[self activateAudioSession];
 		[self updateFocus];
 	}
 }
@@ -196,6 +212,7 @@ static AppDelegate *delegateSingleton = nil;
 - (void)applicationDidBecomeActive:(UIApplication *)application {
 	if (!self.usesSceneLifecycle) {
 		self.sceneActive = YES;
+		[self activateAudioSession];
 		[self updateFocus];
 	}
 }
@@ -232,8 +249,20 @@ static AppDelegate *delegateSingleton = nil;
 	if (!type) {
 		return;
 	}
-	self.audioInterrupted = type.unsignedIntegerValue == AVAudioSessionInterruptionTypeBegan;
-	// An interruption ending in the background must never restart GL/audio.
+	if (type.unsignedIntegerValue == AVAudioSessionInterruptionTypeBegan) {
+		self.audioInterrupted = YES;
+		[self updateFocus];
+		// Suspension notifications may arrive only after the app is active again.
+		if ([notification.userInfo[AVAudioSessionInterruptionWasSuspendedKey] boolValue]) {
+			[self activateAudioSession];
+		}
+	} else if (type.unsignedIntegerValue == AVAudioSessionInterruptionTypeEnded) {
+		self.audioInterrupted = NO;
+		[self activateAudioSession];
+	} else {
+		return;
+	}
+	// Background callbacks only update audio intent; they never restart GL/audio.
 	[self updateFocus];
 }
 

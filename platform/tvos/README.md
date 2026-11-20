@@ -91,8 +91,11 @@ with existing native integrations. It creates `SceneDelegate` configurations.
 - Background and foreground callbacks send Godot `NOTIFICATION_APP_PAUSED`
   and `NOTIFICATION_APP_RESUMED`. Rendering resumes after the scene becomes
   active, without the previous delayed-focus callback.
-- Audio interruptions respect the scene state. Ending an interruption in the
-  background does not restart rendering or audio.
+- Аудиопрерывание приостанавливает звук и native video, сохраняя игровой цикл и
+  ввод активной сцены. При возврате аудиосессия активируется повторно: парное
+  уведомление Ended не гарантировано. Отложенный Began/WasSuspended также
+  обрабатывается при активной сцене. Ошибка активации оставляет игру работающей
+  без звука; уведомления в фоне не возобновляют GL, звук или видео.
 - Scene services receive scene callbacks. Existing application-delegate-only
   plugins receive compatible lifecycle and URL/user-activity callbacks. Cold
   launch URLs and early warm URL/user-activity events are held until

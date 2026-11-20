@@ -119,6 +119,9 @@ bool OSAppleTV::start() {
 		return false;
 	}
 	has_started = true;
+	// Main::setup2() initializes and starts the selected audio driver after the
+	// first activation. Reapply the current session/focus policy once it exists.
+	set_audio_enabled(audio_enabled);
 
 	if (joypad_appletv) {
 		joypad_appletv->start_processing();
@@ -588,7 +591,7 @@ Error OSAppleTV::native_video_play(String p_path, float p_volume, String p_audio
 											 volume:p_volume
 											  audio:audioTrack
 										   subtitle:subtitleTrack]) {
-		if (!is_focused) {
+		if (!can_play_audio()) {
 			native_video_focus_out();
 		}
 		return OK;
@@ -689,11 +692,7 @@ void OSAppleTV::on_focus_out() {
 	}
 
 	[AppDelegate.viewController.godotView stopRendering];
-	// Also suspend a video which is buffering or explicitly paused.
-	native_video_focus_out();
-	if (AudioDriver::get_singleton() == &audio_driver) {
-		audio_driver.stop();
-	}
+	set_audio_enabled(audio_enabled);
 }
 
 void OSAppleTV::on_focus_in() {
@@ -709,12 +708,31 @@ void OSAppleTV::on_focus_in() {
 		get_main_loop()->notification(MainLoop::NOTIFICATION_WM_FOCUS_IN);
 	}
 	[AppDelegate.viewController.godotView startRendering];
-	// Restore only lifecycle playback intent; keep an explicit user pause.
-	[AppDelegate.viewController.videoView focusVideo];
-	// The first activation precedes Main::setup2(), which initializes CoreAudio.
-	if (AudioDriver::get_singleton() == &audio_driver) {
-		audio_driver.start();
+	set_audio_enabled(audio_enabled);
+}
+
+void OSAppleTV::set_audio_enabled(bool p_enabled) {
+	audio_enabled = p_enabled;
+	bool can_play = can_play_audio();
+	// Preserve explicit user pause and suspend buffering videos as well.
+	if (can_play) {
+		[AppDelegate.viewController.videoView focusVideo];
+	} else {
+		native_video_focus_out();
 	}
+	// The first activation precedes Main::setup2()/CoreAudio initialization.
+	if (AudioDriver::get_singleton() != &audio_driver) {
+		return;
+	}
+	if (can_play) {
+		audio_driver.start();
+	} else {
+		audio_driver.stop();
+	}
+}
+
+bool OSAppleTV::can_play_audio() const {
+	return audio_enabled && is_focused && !is_backgrounded;
 }
 
 void OSAppleTV::on_enter_background() {

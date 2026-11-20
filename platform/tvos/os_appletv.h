@@ -89,6 +89,7 @@ private:
 
 	bool is_focused = false;
 	bool is_backgrounded = false;
+	bool audio_enabled = false;
 	bool has_started = false;
 	bool overrides_menu_button = true;
 
@@ -182,6 +183,8 @@ public:
 	void on_focus_in();
 	void on_enter_background();
 	void on_exit_background();
+	void set_audio_enabled(bool p_enabled);
+	bool can_play_audio() const;
 
 	bool get_overrides_menu_button() const;
 	void set_overrides_menu_button(bool p_flag);

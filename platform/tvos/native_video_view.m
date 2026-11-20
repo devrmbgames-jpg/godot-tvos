@@ -95,8 +95,8 @@ static void *GodotVideoPlayerStatusContext = &GodotVideoPlayerStatusContext;
 - (BOOL)playVideoAtPath:(NSString *)filePath volume:(float)videoVolume audio:(NSString *)audioTrack subtitle:(NSString *)subtitleTrack {
 	[self finishPlayingVideo];
 	self.userPaused = NO;
-	UIWindowScene *scene = self.window.windowScene;
-	self.lifecyclePaused = scene ? scene.activationState != UISceneActivationStateForegroundActive : [UIApplication sharedApplication].applicationState != UIApplicationStateActive;
+	// ViewController supplies the current scene/audio gate before replacement.
+	// Keep it while the new AVPlayer and its status observers are created.
 
 	self.avAsset = [AVAsset assetWithURL:[NSURL fileURLWithPath:filePath]];
 	self.avPlayerItem = [AVPlayerItem playerItemWithAsset:self.avAsset];
